@@ -54,11 +54,22 @@ async def main():
     print("Widget iniciado. Solo activo durante partidos en vivo...")
     while True:
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(API_URL)
+                if resp.status_code != 200:
+                    print(f"⚠️ API respondió {resp.status_code}")
+                    await asyncio.sleep(20)
+                    continue
+                text = resp.text.strip()
+                if not text:
+                    print("⚠️ API devolvió respuesta vacía")
+                    await asyncio.sleep(20)
+                    continue
                 data = resp.json()
+
             games = data.get("games", [])
             texto = format_widget(games)
+
             if texto:
                 await bot.edit_message_text(
                     chat_id=CHAT_ID,
@@ -69,11 +80,13 @@ async def main():
                 print(f"🔴 {texto}")
             else:
                 print(f"ℹ️ Sin partido en vivo — {datetime.now().strftime('%H:%M:%S')}")
+
         except Exception as e:
             if "not modified" in str(e).lower():
                 print(f"ℹ️ Sin cambios a las {datetime.now().strftime('%H:%M:%S')}")
             else:
                 print(f"⚠️ Error: {e}")
+
         await asyncio.sleep(20)
 
 asyncio.run(main())
