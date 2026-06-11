@@ -6,7 +6,7 @@ from telegram import Bot
 
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = -499821637
-MESSAGE_ID = 12
+MESSAGE_ID = 75
 API_URL = "https://worldcup26.ir/get/games"
 
 FLAGS = {
