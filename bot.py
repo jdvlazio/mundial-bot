@@ -74,6 +74,6 @@ async def main():
                 print(f"ℹ️ Sin cambios a las {datetime.now().strftime('%H:%M:%S')}")
             else:
                 print(f"⚠️ Error: {e}")
-        await asyncio.sleep(60)
+        await asyncio.sleep(30)
 
 asyncio.run(main())
