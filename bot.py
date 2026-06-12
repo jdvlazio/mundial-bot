@@ -117,7 +117,7 @@ def format_final(m):
 
 
 def format_preview(m):
-    return f"{_flag(m['home'])} - {_flag(m['away'])} · {_col_time(m['kickoff'])}"
+    return f"{_flag(m['home'])} - {_flag(m['away'])} - {_col_time(m['kickoff'])}"
 
 
 async def main():
