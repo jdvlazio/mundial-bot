@@ -1,13 +1,21 @@
 import asyncio
+import time
 import httpx
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from telegram import Bot
 
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = -499821637
-MESSAGE_ID = 75
-API_URL = "https://worldcup26.ir/get/games"
+MESSAGE_ID = 117
+
+# API JSON oculta de ESPN (sin key, específica del Mundial 2026)
+ESPN_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+COL_TZ = timezone(timedelta(hours=-5))   # Colombia (UTC-5, sin horario de verano)
+GRACE = 10 * 60                          # 10 min tras el final antes de mostrar el próximo
+EST_FULLTIME = 120 * 60                  # estimación de duración real (solo si el bot reinicia)
 
 FLAGS = {
     "Mexico": "🇲🇽", "South Africa": "🇿🇦", "South Korea": "🇰🇷",
@@ -29,46 +37,121 @@ FLAGS = {
     "Ecuador": "🇪🇨",
 }
 
-def get_live_match(games):
-    for g in games:
-        if g["finished"] == "FALSE" and g["time_elapsed"] not in ("notstarted", "null", ""):
-            return g
-    return None
+# ESPN a veces nombra distinto al de FLAGS -> lo normalizamos
+ALIASES = {
+    "Bosnia-Herzegovina": "Bosnia and Herzegovina",
+    "Korea Republic": "South Korea",
+    "USA": "United States",
+    "Türkiye": "Turkey", "Turkiye": "Turkey",
+    "Czechia": "Czech Republic",
+    "Côte d'Ivoire": "Ivory Coast", "Cote d'Ivoire": "Ivory Coast",
+    "DR Congo": "Democratic Republic of the Congo",
+}
 
-def format_widget(games):
-    match = get_live_match(games)
-    if not match:
+
+def _flag(name):
+    return FLAGS.get(ALIASES.get(name, name), "🏳️")
+
+
+def _kickoff(event):
+    return datetime.fromisoformat(event["date"].replace("Z", "+00:00"))
+
+
+def _col_time(dt_utc):
+    return dt_utc.astimezone(COL_TZ).strftime("%I:%M %p").lstrip("0")
+
+
+def parse_match(event):
+    comp = event["competitions"][0]
+    status = comp["status"]
+    home = away = None
+    for c in comp["competitors"]:
+        if c["homeAway"] == "home":
+            home = c
+        else:
+            away = c
+    if not home or not away:
         return None
-    home = match["home_team_name_en"]
-    away = match["away_team_name_en"]
-    hf = FLAGS.get(home, "🏳️")
-    af = FLAGS.get(away, "🏳️")
-    hs = match["home_score"]
-    aws = match["away_score"]
-    minute = match["time_elapsed"]
-    minute_display = "En vivo" if minute == "live" else f"{minute}'"
-    return f"{hf} {hs} — {aws} {af} · {minute_display}"
+    return {
+        "id": event["id"],
+        "home": home["team"]["displayName"],
+        "away": away["team"]["displayName"],
+        "home_score": home.get("score", "0"),
+        "away_score": away.get("score", "0"),
+        "state": status["type"]["state"],          # pre / in / post
+        "clock": status.get("displayClock", ""),
+        "detail": status["type"].get("shortDetail", ""),
+        "kickoff": _kickoff(event),
+    }
+
+
+async def fetch_matches():
+    """Devuelve la lista de partidos del Mundial desde ESPN, o None si falla."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(ESPN_URL, headers=HEADERS)
+    if resp.status_code != 200:
+        print(f"⚠️ ESPN respondió {resp.status_code}")
+        return None
+    out = []
+    for e in resp.json().get("events", []):
+        m = parse_match(e)
+        if m:
+            out.append(m)
+    return out
+
+
+def format_live(m):
+    detail = (m["detail"] or "").lower()
+    minute = "Descanso" if ("half" in detail or detail == "ht") else (m["clock"] or "En vivo")
+    return f"{_flag(m['home'])} {m['home_score']} — {m['away_score']} {_flag(m['away'])} · {minute}"
+
+
+def format_final(m):
+    return f"{_flag(m['home'])} {m['home_score']} — {m['away_score']} {_flag(m['away'])} · Final"
+
+
+def format_preview(m):
+    return f"{_flag(m['home'])} - {_flag(m['away'])} · {_col_time(m['kickoff'])}"
+
 
 async def main():
     bot = Bot(token=TOKEN)
-    print("Widget iniciado. Solo activo durante partidos en vivo...")
+    finish_times = {}   # id del partido -> epoch del Full Time
+    seen_live = set()   # ids vistos en vivo (para detectar el momento del final)
+    print("Widget iniciado...")
     while True:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(API_URL)
-                if resp.status_code != 200:
-                    print(f"⚠️ API respondió {resp.status_code}")
-                    await asyncio.sleep(20)
-                    continue
-                text = resp.text.strip()
-                if not text:
-                    print("⚠️ API devolvió respuesta vacía")
-                    await asyncio.sleep(20)
-                    continue
-                data = resp.json()
+            matches = await fetch_matches()
+            if matches is None:
+                await asyncio.sleep(30)
+                continue
+            now = time.time()
 
-            games = data.get("games", [])
-            texto = format_widget(games)
+            # Detectar cuándo terminó cada partido
+            for m in matches:
+                if m["state"] == "in":
+                    seen_live.add(m["id"])
+                elif m["state"] == "post" and m["id"] not in finish_times:
+                    # Si lo vimos en vivo, este es el momento real del final;
+                    # si el bot arrancó con el partido ya terminado, lo estimamos.
+                    finish_times[m["id"]] = now if m["id"] in seen_live \
+                        else m["kickoff"].timestamp() + EST_FULLTIME
+
+            # Decidir qué mostrar
+            live = next((m for m in matches if m["state"] == "in"), None)
+            if live:
+                texto = format_live(live)
+            else:
+                post = [m for m in matches if m["state"] == "post" and m["id"] in finish_times]
+                recent = max(post, key=lambda m: finish_times[m["id"]], default=None)
+                if recent and now - finish_times[recent["id"]] < GRACE:
+                    # Dentro de los 10 min posteriores al final: marcador final
+                    texto = format_final(recent)
+                else:
+                    # Ya pasaron los 10 min (o no hay final reciente): próximo partido
+                    upcoming = [m for m in matches if m["state"] == "pre"]
+                    nxt = min(upcoming, key=lambda m: m["kickoff"], default=None)
+                    texto = format_preview(nxt) if nxt else None
 
             if texto:
                 await bot.edit_message_text(
@@ -77,16 +160,14 @@ async def main():
                     text=texto,
                     parse_mode="Markdown"
                 )
-                print(f"🔴 {texto}")
+                print(f"📌 {texto}")
             else:
-                print(f"ℹ️ Sin partido en vivo — {datetime.now().strftime('%H:%M:%S')}")
-
+                print(f"ℹ️ Nada que mostrar — {datetime.now().strftime('%H:%M:%S')}")
         except Exception as e:
             if "not modified" in str(e).lower():
                 print(f"ℹ️ Sin cambios a las {datetime.now().strftime('%H:%M:%S')}")
             else:
                 print(f"⚠️ Error: {e}")
-
-        await asyncio.sleep(20)
+        await asyncio.sleep(30)
 
 asyncio.run(main())
