@@ -106,14 +106,20 @@ async def fetch_matches():
     return out
 
 
+def _score(m):
+    return f"{_flag(m['home'])} {m['home_score']} — {m['away_score']} {_flag(m['away'])}"
+
+
 def format_live(m):
     detail = (m["detail"] or "").lower()
-    minute = "Descanso" if ("half" in detail or detail == "ht") else (m["clock"] or "En vivo")
-    return f"{_flag(m['home'])} {m['home_score']} — {m['away_score']} {_flag(m['away'])} · {minute}"
+    # En vivo con minuto -> "· 34'"; descanso o sin minuto -> solo marcador
+    if "half" in detail or detail == "ht" or not m["clock"]:
+        return _score(m)
+    return f"{_score(m)} · {m['clock']}"
 
 
 def format_final(m):
-    return f"{_flag(m['home'])} {m['home_score']} — {m['away_score']} {_flag(m['away'])} · Final"
+    return _score(m)
 
 
 def format_preview(m):
