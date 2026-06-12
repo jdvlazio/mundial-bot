@@ -86,9 +86,15 @@ def parse_match(event):
 
 
 async def fetch_matches():
-    """Devuelve la lista de partidos del Mundial desde ESPN, o None si falla."""
+    """Devuelve la lista de partidos del Mundial desde ESPN, o None si falla.
+
+    Consulta una ventana de varios días (ayer..+3) para que, al terminar el
+    último partido del día, ya tengamos cargado el siguiente.
+    """
+    hoy = datetime.now(timezone.utc)
+    rango = f"{(hoy - timedelta(days=1)):%Y%m%d}-{(hoy + timedelta(days=3)):%Y%m%d}"
     async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(ESPN_URL, headers=HEADERS)
+        resp = await client.get(ESPN_URL, params={"dates": rango}, headers=HEADERS)
     if resp.status_code != 200:
         print(f"⚠️ ESPN respondió {resp.status_code}")
         return None
