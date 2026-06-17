@@ -46,6 +46,7 @@ ALIASES = {
     "Czechia": "Czech Republic",
     "Côte d'Ivoire": "Ivory Coast", "Cote d'Ivoire": "Ivory Coast",
     "DR Congo": "Democratic Republic of the Congo",
+    "Congo DR": "Democratic Republic of the Congo",
 }
 
 
