@@ -127,6 +127,36 @@ def format_preview(m):
     return f"{_flag(m['home'])} - {_flag(m['away'])} · {_col_time(m['kickoff'])}"
 
 
+def build_text(matches, finish_times, now):
+    """Arma el texto del mensaje. Soporta varios partidos en simultáneo:
+    una línea por partido (en vivo, o finales recientes, o próximos)."""
+    # 1) Partidos en vivo (prioridad) — todos los que estén jugándose
+    live = sorted((m for m in matches if m["state"] == "in"), key=lambda m: m["kickoff"])
+    if live:
+        return "\n".join(format_live(m) for m in live)
+
+    # 2) Finales recientes (dentro de la ventana de gracia) — todos
+    recientes = sorted(
+        (m for m in matches if m["state"] == "post"
+         and m["id"] in finish_times and now - finish_times[m["id"]] < GRACE),
+        key=lambda m: m["kickoff"],
+    )
+    if recientes:
+        return "\n".join(format_final(m) for m in recientes)
+
+    # 3) Próximo(s): el saque más cercano, y todos los que arranquen a esa misma hora
+    upcoming = [m for m in matches if m["state"] == "pre"]
+    if upcoming:
+        proximo = min(m["kickoff"] for m in upcoming)
+        simultaneos = sorted(
+            (m for m in upcoming if m["kickoff"] == proximo),
+            key=lambda m: (m["home"], m["away"]),
+        )
+        return "\n".join(format_preview(m) for m in simultaneos)
+
+    return None
+
+
 async def main():
     bot = Bot(token=TOKEN)
     finish_times = {}   # id del partido -> epoch del Full Time
@@ -150,21 +180,8 @@ async def main():
                     finish_times[m["id"]] = now if m["id"] in seen_live \
                         else m["kickoff"].timestamp() + EST_FULLTIME
 
-            # Decidir qué mostrar
-            live = next((m for m in matches if m["state"] == "in"), None)
-            if live:
-                texto = format_live(live)
-            else:
-                post = [m for m in matches if m["state"] == "post" and m["id"] in finish_times]
-                recent = max(post, key=lambda m: finish_times[m["id"]], default=None)
-                if recent and now - finish_times[recent["id"]] < GRACE:
-                    # Dentro de los 10 min posteriores al final: marcador final
-                    texto = format_final(recent)
-                else:
-                    # Ya pasaron los 10 min (o no hay final reciente): próximo partido
-                    upcoming = [m for m in matches if m["state"] == "pre"]
-                    nxt = min(upcoming, key=lambda m: m["kickoff"], default=None)
-                    texto = format_preview(nxt) if nxt else None
+            # Decidir qué mostrar (soporta varios partidos en simultáneo)
+            texto = build_text(matches, finish_times, now)
 
             if texto:
                 await bot.edit_message_text(
