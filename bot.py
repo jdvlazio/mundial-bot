@@ -133,7 +133,7 @@ def build_text(matches, finish_times, now):
     # 1) Partidos en vivo (prioridad) — todos los que estén jugándose
     live = sorted((m for m in matches if m["state"] == "in"), key=lambda m: m["kickoff"])
     if live:
-        return "\n".join(format_live(m) for m in live)
+        return " | ".join(format_live(m) for m in live)
 
     # 2) Finales recientes (dentro de la ventana de gracia) — todos
     recientes = sorted(
@@ -142,7 +142,7 @@ def build_text(matches, finish_times, now):
         key=lambda m: m["kickoff"],
     )
     if recientes:
-        return "\n".join(format_final(m) for m in recientes)
+        return " | ".join(format_final(m) for m in recientes)
 
     # 3) Próximo(s): el saque más cercano, y todos los que arranquen a esa misma hora
     upcoming = [m for m in matches if m["state"] == "pre"]
@@ -152,7 +152,7 @@ def build_text(matches, finish_times, now):
             (m for m in upcoming if m["kickoff"] == proximo),
             key=lambda m: (m["home"], m["away"]),
         )
-        return "\n".join(format_preview(m) for m in simultaneos)
+        return " | ".join(format_preview(m) for m in simultaneos)
 
     return None
 
